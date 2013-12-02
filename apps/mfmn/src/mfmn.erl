@@ -18,10 +18,12 @@ ping() ->
     riak_core_vnode_master:sync_spawn_command(IndexNode, ping, mfmn_vnode_master).
 
 put(Key, Value)->
-    DocIdx = riak_core_util:chash_key({<<"key">>, term_to_binary(Key)}),
-    PrefList = riak_core_apl:get_primary_apl(DocIdx, 1, mfmn),
-    [{IndexNode, _Type}] = PrefList,
-    riak_core_vnode_master:sync_spawn_command(IndexNode, {put, Key, Value}, mfmn_vnode_master).
+    {ok, ReqID} = rts_write_fsm:write(Client, StatName, Op),
+    wait_for_reqid(ReqID, ?TIMEOUT).
+    %%DocIdx = riak_core_util:chash_key({<<"key">>, term_to_binary(Key)}),
+    %%PrefList = riak_core_apl:get_primary_apl(DocIdx, 1, mfmn),
+    %%[{IndexNode, _Type}] = PrefList,
+    %%riak_core_vnode_master:sync_spawn_command(IndexNode, {put, Key, Value}, mfmn_vnode_master).
 
 get(Key)->
     DocIdx = riak_core_util:chash_key({<<"key">>, term_to_binary(Key)}),
