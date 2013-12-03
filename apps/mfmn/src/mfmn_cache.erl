@@ -2,9 +2,9 @@
 -behavior(gen_server).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([start/0, put/2, get/1]).
+-export([start/0, put/2, get/1, add_key/5, inc/2]).
 
--record(cache , {kv:=dict:new(), lease:=dict:new(), pendingReqs:=dict:new()}). 
+-record(cache , {kv=dict:new(), lease=dict:new(), pendingReqs=dict:new()}). 
 
 % These are all wrappers for calls to the server
 
@@ -47,7 +47,7 @@ handle_call({inc, Key, Value}, _From, Cache) ->
             Old_value = dict:fetch(Key, Cache#cache.kv),
             D0 = dict:erase(Key, Cache#cache.kv),
             C1 = dict:append(Key, Old_value + Value, D0),
-	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), put, false, Key, Value])
+	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), put, false, Key, Value]);
           {error} ->
 	    C1 = dict:append(Key, Value, Cache#cache.kv),
 	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), put, true, Key, Value])
@@ -58,19 +58,22 @@ handle_call({get, Key}, _From, Cache) ->
 	ReqID = get_reqid(),
 	case dict:is_key(Key, Cache#cache.kv) of
          true ->
-		if  dict:fetch(Key, Cache#cache.lease) >= get_time_insecond() ->
+		Time = get_time_insecond(),
+		Value = dict:fetch(Key, Cache#cache.lease),
+		if  Time =< Value ->
+		    %if 1 =:= 1 ->
 			{reply, {ok,dict:fetch(Key, Cache#cache.kv)}, Cache};
 		    true ->
 			mfmn_cache_sup:start_op_fsm([ReqID, self(), get, true, Key, undefined]),
 			%%When receives some message
 			PQ = dict:addpend(ReqID, _From, Cache#cache.pendingReqs),
-		    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}};
-		    end,
+		    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}}
+		    end;
          false ->
 		mfmn_cache_sup:start_read_fsm([ReqID, self(), get, true, Key, undefined]),
 		%%When receives some message
 		PQ = dict:addpend(ReqID, _From, Cache#cache.pendingReqs),
-	    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}};
+	    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}}
         end;
 
 handle_call({updateValue, Key, Value, Lease, ReqID}, _From, Cache) ->
@@ -78,13 +81,14 @@ handle_call({updateValue, Key, Value, Lease, ReqID}, _From, Cache) ->
 	L0 = dict:erase(Key, Cache#cache.lease),
 	K1 = dict:append(Key, Value, K0),
 	L1 = dict:append(Key, Lease + get_time_insecond(), L0),
-	if dict:is_key(ReqID, Cache#cache.pendingReqs) ->
-	   	reply(dict:fetch(ReqID, Cache#cache.pendingReqs), {ReqID, Key, Value}),
-		R0 = dict:erase(ReqID, Cache#cache.pendingReqs),
+	IsKey = dict:is_key(ReqID, Cache#cache.pendingReqs),
+	if IsKey=:=true ->
+	   	gen_server:reply(dict:fetch(ReqID, Cache#cache.pendingReqs), {ReqID, Key, Value}),
+		R0 = dict:erase(ReqID, Cache#cache.pendingReqs);
 		true ->
 		R0 = Cache#cache.pendingReqs
 	end,
-	{noreply, Cache#cache{kv=K1, lease=L1, pendingReqs=R0};
+	{noreply, Cache#cache{kv=K1, lease=L1, pendingReqs=R0}}.
 
 % We get compile warnings from gen_server unless we define these
 handle_cast(_Message, Library) -> {noreply, Library}.

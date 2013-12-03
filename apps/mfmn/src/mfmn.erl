@@ -4,8 +4,8 @@
 
 -export([
          ping/0,
-	 put/2,
-	 get/1
+	 read/1,
+	 inc/1
         ]).
 
 -define(TIMEOUT, 5000).
@@ -20,7 +20,7 @@ ping() ->
     riak_core_vnode_master:sync_spawn_command(IndexNode, ping, mfmn_vnode_master).
 
 inc(Key) ->
-   {ok, ReqID} = mfmn_cache:inc(Key, 1).
+   {ok, _} = mfmn_cache:inc(Key, 1).
 
 %%write(Key, Value)->
     %%{ok, ReqID} = mfmn_cache:put(Key, Value),
@@ -33,7 +33,7 @@ inc(Key) ->
 read(Key)->
     case mfmn_cache:get(Key) of
 	{ok, Value} ->
-	  {Key, Value}
+	  {Key, Value};
 	{wait, ReqID} ->
 	  wait_for_reqid(ReqID, ?TIMEOUT)
     end. 

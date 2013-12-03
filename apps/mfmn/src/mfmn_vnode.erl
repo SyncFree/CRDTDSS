@@ -18,9 +18,8 @@
          handle_exit/3]).
 
 -export([
-         put/3,
          get/4,
-         inc/3,
+         inc/5
         ]).
 
 
@@ -34,7 +33,7 @@ inc(Preflist, ReqID, Fetch, Key, Value) ->
                                    {fsm, undefined, self()},
                                    ?MASTER).
 
-get(Preflist, ReqID, Fetch, Key) ->
+get(Preflist, ReqID, _, Key) ->
     riak_core_vnode_master:command(Preflist,
                                    {get, ReqID, Key},
                                    {fsm, undefined, self()},
@@ -53,7 +52,7 @@ handle_command(ping, _Sender, State) ->
 handle_command({get, ReqID, Key}, _Sender, State) ->
     case dict:find(Key) of
 	{ok, Value} ->
-	  {reply, {ReqID, Value, 30}, State}
+	  {reply, {ReqID, Value, 30}, State};
 	{error} ->
 	  {reply, {error, no_key}, State}
     end;
@@ -64,14 +63,14 @@ handle_command({inc, ReqID, Fetch, Key, Value}, _Sender, State) ->
 	{ok, Old_value} ->
 	    NewValue=Old_value + Value,
     	    D0 = dict:erase(Key, State#state.kv),
-    	    D1 = dict:append(Key, NewValue, D0)
+    	    D1 = dict:append(Key, NewValue, D0);
 	{error} ->
     	    D1 = dict:append(Key, Value, State#state.kv),
 	    NewValue=Value
     end,
     if 
 	Fetch =:= true ->
-	  {reply, {ReqID, NewValue, 30}, State#state{kv=D1}}
+	  {reply, {ReqID, NewValue, 30}, State#state{kv=D1}};
         true ->
 	  {noreply, State#state{kv=D1}}
     end;

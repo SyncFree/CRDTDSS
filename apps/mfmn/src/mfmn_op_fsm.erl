@@ -1,7 +1,7 @@
 %% @doc The coordinator for stat write opeartions.  This example will
 %% show how to properly replicate your data in Riak Core by making use
 %% of the _preflist_.
--module(mfmn_write_fsm).
+-module(mfmn_op_fsm).
 -behavior(gen_fsm).
 -include("mfmn.hrl").
 
@@ -18,7 +18,7 @@
 -record(state, {req_id :: pos_integer(),
                 from :: pid(),
 		op :: atom(),
-		fetch = true | false,
+		fetch,
 		key,
                 val = undefined :: term() | undefined,
                 preflist :: riak_core_apl:preflist2(),
@@ -28,10 +28,10 @@
 %%% API
 %%%===================================================================
 
-start_link(ReqID, From, Op, Fecth, Key) ->
+start_link(ReqID, From, Op, Fetch, Key) ->
     start_link(ReqID, From, Op, Fetch, Key, undefined).
 
-start_link(ReqID, From, Op, Fecth, Key, Val) ->
+start_link(ReqID, From, Op, Fetch, Key, Val) ->
     gen_fsm:start_link(?MODULE, [ReqID, From, Op, Fetch, Key, Val], []).
 
 %%%===================================================================
@@ -59,16 +59,16 @@ prepare(timeout, SD0=#state{key=Key}) ->
 %% @doc Execute the write request and then go into waiting state to
 %% verify it has meets consistency requirements.
 execute(timeout, SD0=#state{req_id=ReqID,
-                            stat_name=StatName,
                             op=Op,
-			    fecth=Fetch,
+			    fetch=Fetch,
+			    key=Key,
                             val=Val,
                             preflist=Preflist}) ->
     case Val of
         undefined ->
-            mfmn_vnode:Op(Preflist, ReqID, Key);
+            mfmn_vnode:Op(Preflist, ReqID, Fetch, Key);
         _ ->
-            mfmn_vnode:Op(Preflist, ReqID, Key, Val)
+            mfmn_vnode:Op(Preflist, ReqID, Fetch, Key, Val)
     end,
     if
 	Fetch =:= true ->
@@ -80,10 +80,10 @@ execute(timeout, SD0=#state{req_id=ReqID,
 %% @doc Waits for 1 write reqs to respond.
 waiting({ok, ReqID, Val, Lease}, SD0=#state{from=From, key=Key}) ->
     SD = SD0#state{val=Val},
-    mfmn_cache:add_key(From, ReqID, Key, Val, Lease},
+    mfmn_cache:add_key(From, ReqID, Key, Val, Lease),
     {stop, normal, SD};
 
-waiting({error, no_key}, SD0) ->
+waiting({error, no_key}, SD) ->
     {stop, normal, SD}.
     
 
@@ -104,5 +104,3 @@ terminate(_Reason, _SN, _SD) ->
 %%%===================================================================
 %%% Internal Functions
 %%%===================================================================
-
-mk_reqid() -> erlang:phash2(erlang:now()).
