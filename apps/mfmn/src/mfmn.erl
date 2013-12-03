@@ -8,6 +8,8 @@
 	 get/1
         ]).
 
+-define(TIMEOUT, 5000).
+
 %% Public API
 
 %% @doc Pings a random vnode to make sure communication is functional
@@ -17,16 +19,29 @@ ping() ->
     [{IndexNode, _Type}] = PrefList,
     riak_core_vnode_master:sync_spawn_command(IndexNode, ping, mfmn_vnode_master).
 
-put(Key, Value)->
-    {ok, ReqID} = rts_write_fsm:write(Client, StatName, Op),
-    wait_for_reqid(ReqID, ?TIMEOUT).
+inc(Key) ->
+   {ok, ReqID} = mfmn_cache:inc(Key, 1).
+
+%%write(Key, Value)->
+    %%{ok, ReqID} = mfmn_cache:put(Key, Value),
+    %%wait_for_reqid(ReqID, ?TIMEOUT).
     %%DocIdx = riak_core_util:chash_key({<<"key">>, term_to_binary(Key)}),
     %%PrefList = riak_core_apl:get_primary_apl(DocIdx, 1, mfmn),
     %%[{IndexNode, _Type}] = PrefList,
     %%riak_core_vnode_master:sync_spawn_command(IndexNode, {put, Key, Value}, mfmn_vnode_master).
 
-get(Key)->
-    DocIdx = riak_core_util:chash_key({<<"key">>, term_to_binary(Key)}),
-    PrefList = riak_core_apl:get_primary_apl(DocIdx, 1, mfmn),
-    [{IndexNode, _Type}] = PrefList,
-    riak_core_vnode_master:sync_spawn_command(IndexNode, {get, Key}, mfmn_vnode_master).
+read(Key)->
+    case mfmn_cache:get(Key) of
+	{ok, Value} ->
+	  {Key, Value}
+	{wait, ReqID} ->
+	  wait_for_reqid(ReqID, ?TIMEOUT)
+    end. 
+
+wait_for_reqid(ReqID, Timeout) ->
+    receive
+        {ReqID, Key, Value} -> {Key, Value};
+        _ -> {error, unhandled_message}
+    after Timeout ->
+            {error, timeout}
+    end.

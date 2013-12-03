@@ -14,6 +14,9 @@ start() ->
 put(Key, Value) ->
    gen_server:call(?MODULE, {put, Key, Value}).
 
+inc(Key, Value) ->
+   gen_server:call(?MODULE, {inc, Key, Value}).
+
 get(Key) ->
    gen_server:call(?MODULE, {get, Key}).
 
@@ -25,43 +28,58 @@ init([]) ->
 	{ok, #cache{}}.
 
 % handle_call is invoked in response to gen_server:call
-handle_call({put, Key, Value}, _From, Cache) ->
-       case dict:is_key(Key, Cache#cache.kv) of
-	 true ->
-        	C0 = dict:erase(Key, Cache#cache.kv),
-        	C1 = dict:append(Key, Value, C0),
-		mfmn_cache_sup:start_write_fsm({get_reqid(), self(), put, false, Key, Value});
-         false ->
-		C1 = dict:append(Key, Value, Cache#cache.kv),
-		mfmn_cache_sup:start_write_fsm({get_reqid(), self(), put, true, Key, Value})
-        end,
-	{reply, {ok}, C1};
+% handle_call({put, Key, Value}, _From, Cache) ->
+%       case dict:is_key(Key, Cache#cache.kv) of
+%	 true ->
+%        	C0 = dict:erase(Key, Cache#cache.kv),
+%        	C1 = dict:append(Key, Value, C0),
+%		mfmn_cache_sup:start_write_fsm({get_reqid(), self(), put, false, Key, Value})
+%         false ->
+%		C1 = dict:append(Key, Value, Cache#cache.kv),
+%		mfmn_cache_sup:start_write_fsm({get_reqid(), self(), put, true, Key, Value})
+%        end,
+%	{reply, {ok}, C1};
+
+handle_call({inc, Key, Value}, _From, Cache) ->
+	ReqID = get_reqid(),
+	case dict:find(Key, Cache#cache.kv) of
+          {ok, Value} ->
+            Old_value = dict:fetch(Key, Cache#cache.kv),
+            D0 = dict:erase(Key, Cache#cache.kv),
+            C1 = dict:append(Key, Old_value + Value, D0),
+	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), put, false, Key, Value])
+          {error} ->
+	    C1 = dict:append(Key, Value, Cache#cache.kv),
+	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), put, true, Key, Value])
+          end,
+	{reply, {ok, ReqID}, C1};
 
 handle_call({get, Key}, _From, Cache) ->
+	ReqID = get_reqid(),
 	case dict:is_key(Key, Cache#cache.kv) of
          true ->
-		if  dict:fetch(Key, Cache#cache.lease) =< get_time_insecond() ->
-			{reply, {dict:fetch(Key, Cache#cache.kv)}, Cache};
+		if  dict:fetch(Key, Cache#cache.lease) >= get_time_insecond() ->
+			{reply, {ok,dict:fetch(Key, Cache#cache.kv)}, Cache};
 		    true ->
-			mfmn_cache_sup:start_read_fsm({get_redid(), self(), get, true, Key, _}),
+			mfmn_cache_sup:start_op_fsm([ReqID, self(), get, true, Key, undefined]),
 			%%When receives some message
-			PQ = dict:addpend(get_reqid(), _From, Cache#cache.pendingReqs),
-		    	{noreply, Cache#cache{pendingReqs= PQ}};
+			PQ = dict:addpend(ReqID, _From, Cache#cache.pendingReqs),
+		    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}};
 		    end,
          false ->
-		mfmn_cache_sup:start_read_fsm({get_reqid(), self(), get, true, Key, _}),
+		mfmn_cache_sup:start_read_fsm([ReqID, self(), get, true, Key, undefined]),
 		%%When receives some message
-		PQ = dict:addpend(get_reqid(), _From, Cache#cache.pendingReqs),
-		{noreply, Cache#cache{pendingReqs= PQ}}
+		PQ = dict:addpend(ReqID, _From, Cache#cache.pendingReqs),
+	    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}};
         end;
 
 handle_call({updateValue, Key, Value, Lease, ReqID}, _From, Cache) ->
 	K0 = dict:erase(Key, Cache#cache.kv),
 	L0 = dict:erase(Key, Cache#cache.lease),
-	K1 = dict:append(Key, Value, Cache#cache.kv),
-	L1 = dict:append(Key, Lease + get_time_insecond(), Cache#cache.lease),
+	K1 = dict:append(Key, Value, K0),
+	L1 = dict:append(Key, Lease + get_time_insecond(), L0),
 	if dict:is_key(ReqID, Cache#cache.pendingReqs) ->
-	   	reply(dict:fetch(ReqID, Cache#cache.pendingReqs), {Key, Value}),
+	   	reply(dict:fetch(ReqID, Cache#cache.pendingReqs), {ReqID, Key, Value}),
 		R0 = dict:erase(ReqID, Cache#cache.pendingReqs),
 		true ->
 		R0 = Cache#cache.pendingReqs
