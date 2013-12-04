@@ -9,6 +9,7 @@
 % These are all wrappers for calls to the server
 
 start() -> 
+   io:format('Starting cache process'),
    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 put(Key, Value) ->
