@@ -47,10 +47,10 @@ handle_call({inc, Key, Value}, _From, Cache) ->
             Old_value = dict:fetch(Key, Cache#cache.kv),
             D0 = dict:erase(Key, Cache#cache.kv),
             C1 = dict:append(Key, Old_value + Value, D0),
-	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), put, false, Key, Value]);
+	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), inc, false, Key, Value]);
           error ->
 	    C1 = dict:append(Key, Value, Cache#cache.kv),
-	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), put, true, Key, Value])
+	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), inc, true, Key, Value])
           end,
 	{reply, {ok, ReqID}, C1};
 
