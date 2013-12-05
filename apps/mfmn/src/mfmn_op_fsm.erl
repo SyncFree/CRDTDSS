@@ -51,7 +51,7 @@ init([ReqID, From, Op, Fetch, Key, Val]) ->
 %% @doc Prepare the write by calculating the _preference list_.
 prepare(timeout, SD0=#state{key=Key}) ->
     DocIdx = riak_core_util:chash_key({<<"basic">>,
-                                       list_to_binary(Key)}),
+                                       term_to_binary(Key)}),
     Preflist = riak_core_apl:get_apl(DocIdx, ?N, mfmn_vnode),
     SD = SD0#state{preflist=Preflist},
     {next_state, execute, SD, 0}.

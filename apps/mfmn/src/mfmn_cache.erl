@@ -2,14 +2,13 @@
 -behavior(gen_server).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([start/0, put/2, get/1, add_key/5, inc/2]).
+-export([start_link/0, put/2, get/1, add_key/5, inc/2]).
 
 -record(cache , {kv=dict:new(), lease=dict:new(), pendingReqs=dict:new()}). 
 
 % These are all wrappers for calls to the server
 
-start() -> 
-   io:format('Starting cache process'),
+start_link() -> 
    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 put(Key, Value) ->
@@ -26,7 +25,7 @@ add_key(PID, ReqID, Key, Value, Lease ) ->
 
 % This is called when a connection is made to the server
 init([]) ->
-	{ok, #cache{}}.
+	{ok, #cache{kv=dict:new(), lease=dict:new(), pendingReqs=dict:new()}}.
 
 % handle_call is invoked in response to gen_server:call
 % handle_call({put, Key, Value}, _From, Cache) ->
@@ -49,7 +48,7 @@ handle_call({inc, Key, Value}, _From, Cache) ->
             D0 = dict:erase(Key, Cache#cache.kv),
             C1 = dict:append(Key, Old_value + Value, D0),
 	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), put, false, Key, Value]);
-          {error} ->
+          error ->
 	    C1 = dict:append(Key, Value, Cache#cache.kv),
 	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), put, true, Key, Value])
           end,
@@ -65,15 +64,15 @@ handle_call({get, Key}, _From, Cache) ->
 		    %if 1 =:= 1 ->
 			{reply, {ok,dict:fetch(Key, Cache#cache.kv)}, Cache};
 		    true ->
-			mfmn_cache_sup:start_op_fsm([ReqID, self(), get, true, Key, undefined]),
+			mfmn_op_worker_sup:start_op_fsm([ReqID, self(), get, true, Key, undefined]),
 			%%When receives some message
-			PQ = dict:addpend(ReqID, _From, Cache#cache.pendingReqs),
+			PQ = dict:append(ReqID, _From, Cache#cache.pendingReqs),
 		    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}}
 		    end;
          false ->
-		mfmn_cache_sup:start_read_fsm([ReqID, self(), get, true, Key, undefined]),
+		mfmn_op_worker_sup:start_op_fsm([ReqID, self(), get, true, Key, undefined]),
 		%%When receives some message
-		PQ = dict:addpend(ReqID, _From, Cache#cache.pendingReqs),
+		PQ = dict:append(ReqID, _From, Cache#cache.pendingReqs),
 	    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}}
         end;
 
