@@ -14,7 +14,7 @@ start_op_fsm(Args) ->
     supervisor:start_child(?MODULE, Args).
 
 init([]) ->
-    Cache = {mfmn_cache,
-                {mfmn_cache, start_link, []},
-                temporary, 5000, worker, [mfmn_cache]},
-    {ok, {{simple_one_for_one, 10, 10}, [Cache]}}.
+    Worker = {mfmn_op_fms,
+                {mfmn_op_fsm, start_link, []},
+                transient, 5000, worker, [mfmn_op_fms]},
+    {ok, {{simple_one_for_one, 10, 10}, [Worker]}}.

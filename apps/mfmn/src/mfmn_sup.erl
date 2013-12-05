@@ -26,7 +26,7 @@ init(_Args) ->
     CacheSup = { mfmn_cache_sup,
                   {mfmn_cache_sup, start_link, []},
                   permanent, 5000, supervisor, [mfmn_cache_sup]},
-    OpsSup = { mfmn_op_worker_sup,
+   OpsSup = { mfmn_op_worker_sup,
                   {mfmn_op_worker_sup, start_link, []},
                   permanent, 5000, supervisor, [mfmn_op_worker_sup]},
 
