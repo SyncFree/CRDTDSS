@@ -40,6 +40,7 @@ start_link(ReqID, From, Op, Fetch, Key, Val) ->
 
 %% @doc Initialize the state data.
 init([ReqID, From, Op, Fetch, Key, Val]) ->
+    io:format("Op FSM inited~n"),
     SD = #state{req_id=ReqID,
                 from=From,
 		op=Op,
@@ -50,6 +51,7 @@ init([ReqID, From, Op, Fetch, Key, Val]) ->
 
 %% @doc Prepare the write by calculating the _preference list_.
 prepare(timeout, SD0=#state{key=Key}) ->
+    io:format("FSM preparing...~n"),
     DocIdx = riak_core_util:chash_key({<<"basic">>,
                                        term_to_binary(Key)}),
     Preflist = riak_core_apl:get_apl(DocIdx, ?N, mfmn_vnode),
@@ -80,6 +82,7 @@ execute(timeout, SD0=#state{req_id=ReqID,
 %% @doc Waits for 1 write reqs to respond.
 waiting({ok, ReqID, Val, Lease}, SD0=#state{from=From, key=Key}) ->
     SD = SD0#state{val=Val},
+    io:format("Got result from VNode~n"),
     mfmn_cache:add_key(From, ReqID, Key, Val, Lease),
     {stop, normal, SD};
 

@@ -4,7 +4,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([start_link/0, put/2, get/1, add_key/5, inc/2]).
 
--record(cache , {kv=dict:new(), lease=dict:new(), pendingReqs=dict:new()}). 
+-record(cache , {kv, lease, pendingReqs}). 
 
 % These are all wrappers for calls to the server
 
@@ -21,6 +21,7 @@ get(Key) ->
    gen_server:call(?MODULE, {get, Key}).
 
 add_key(PID, ReqID, Key, Value, Lease ) ->
+   io:format("Calling add key"),
    gen_server:call(PID, {updateKey, Key, Value, Lease, ReqID}).
 
 % This is called when a connection is made to the server
@@ -43,27 +44,37 @@ init([]) ->
 handle_call({inc, Key, Value}, _From, Cache) ->
 	ReqID = get_reqid(),
 	case dict:find(Key, Cache#cache.kv) of
-          {ok, Value} ->
-            Old_value = dict:fetch(Key, Cache#cache.kv),
-            D0 = dict:erase(Key, Cache#cache.kv),
-            C1 = dict:append(Key, Old_value + Value, D0),
+          {ok, Value_list} ->
+	    io:format("Has value"),
+	    Old_value = get_first(Value_list),
+            C0 = dict:erase(Key, Cache#cache.kv),
+            C1 = dict:append(Key, Old_value + Value, C0),
+            L0 = Cache#cache.lease,
 	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), inc, false, Key, Value]);
           error ->
+	    io:format("Fetching values from remote~n"),
 	    C1 = dict:append(Key, Value, Cache#cache.kv),
+	    Lease = get_time_insecond()+30,
+	    io:format("Lease of current key:~w~n",[Lease]),
+	    L0 = dict:append(Key, Lease, Cache#cache.lease),
 	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), inc, true, Key, Value])
           end,
-	{reply, {ok, ReqID}, C1};
+	{reply, {ok, ReqID}, Cache#cache{kv = C1, lease= L0}};
 
 handle_call({get, Key}, _From, Cache) ->
 	ReqID = get_reqid(),
 	case dict:is_key(Key, Cache#cache.kv) of
          true ->
 		Time = get_time_insecond(),
-		Value = dict:fetch(Key, Cache#cache.lease),
-		if  Time =< Value ->
+		Lease = get_first(dict:fetch(Key, Cache#cache.lease)),
+		io:format("Now:~w Lease:~w ~n",[Time, Lease]),
+		if  Time =< Lease ->
 		    %if 1 =:= 1 ->
-			{reply, {ok,dict:fetch(Key, Cache#cache.kv)}, Cache};
+			io:format("Lease has not expired!"),
+			Value = get_first(dict:fetch(Key, Cache#cache.kv)),
+			{reply, {ok, Value}, Cache};
 		    true ->
+			io:format("Fetching from remote..."),
 			mfmn_op_worker_sup:start_op_fsm([ReqID, self(), get, true, Key, undefined]),
 			%%When receives some message
 			PQ = dict:append(ReqID, _From, Cache#cache.pendingReqs),
@@ -76,7 +87,8 @@ handle_call({get, Key}, _From, Cache) ->
 	    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}}
         end;
 
-handle_call({updateValue, Key, Value, Lease, ReqID}, _From, Cache) ->
+handle_call({updateKey, Key, Value, Lease, ReqID}, _From, Cache) ->
+	io:format("received updated value"),
 	K0 = dict:erase(Key, Cache#cache.kv),
 	L0 = dict:erase(Key, Cache#cache.lease),
 	K1 = dict:append(Key, Value, K0),
@@ -99,3 +111,6 @@ code_change(_OldVersion, Library, _Extra) -> {ok, Library}.
 %private function
 get_time_insecond() -> calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
 get_reqid() -> erlang:phash2(erlang:now()).
+get_first(List) -> 
+   [Value|_] = List,
+    Value.
