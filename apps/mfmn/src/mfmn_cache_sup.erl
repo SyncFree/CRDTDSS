@@ -12,4 +12,4 @@ init([]) ->
     Cache = {mfmn_cache,
                 {mfmn_cache, start_link, []},
                 permanent, 5000, worker, [mfmn_cache]},
-    {ok, {{one_for_one, 5, 10}, [Cache]}}.
+    catch  {ok, {{one_for_one, 5, 10}, [Cache]}}.
