@@ -2,13 +2,13 @@
 -behavior(gen_server).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([start/0, put/2, get/1, add_key/5, inc/2]).
+-export([start_link/0, put/2, get/1, add_key/5, inc/2]).
 
 -record(cache , {kv=dict:new(), lease=dict:new(), pendingReqs=dict:new()}). 
 
 % These are all wrappers for calls to the server
 
-start() -> 
+start_link() -> 
    io:format('Starting cache process'),
    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
