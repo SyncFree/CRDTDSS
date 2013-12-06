@@ -22,7 +22,9 @@ get(Key) ->
 
 add_key(PID, ReqID, Key, Value, Lease ) ->
    io:format("Calling add key"),
-   gen_server:call(PID, {updateKey, Key, Value, Lease, ReqID}).
+   gen_server:call(PID, {updateKey, Key, Value, Lease, ReqID}),
+   io:format("Returning add key").
+   
 
 % This is called when a connection is made to the server
 init([]) ->
@@ -54,7 +56,7 @@ handle_call({inc, Key, Value}, _From, Cache) ->
           error ->
 	    io:format("Fetching values from remote~n"),
 	    C1 = dict:append(Key, Value, Cache#cache.kv),
-	    Lease = get_time_insecond()+30,
+	    Lease = get_time_insecond()+0,
 	    io:format("Lease of current key:~w~n",[Lease]),
 	    L0 = dict:append(Key, Lease, Cache#cache.lease),
 	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), inc, true, Key, Value])
@@ -88,19 +90,21 @@ handle_call({get, Key}, _From, Cache) ->
         end;
 
 handle_call({updateKey, Key, Value, Lease, ReqID}, _From, Cache) ->
-	io:format("received updated value"),
+	io:format("received updated value~n"),
 	K0 = dict:erase(Key, Cache#cache.kv),
 	L0 = dict:erase(Key, Cache#cache.lease),
 	K1 = dict:append(Key, Value, K0),
 	L1 = dict:append(Key, Lease + get_time_insecond(), L0),
 	IsKey = dict:is_key(ReqID, Cache#cache.pendingReqs),
 	if IsKey=:=true ->
-	   	gen_server:reply(dict:fetch(ReqID, Cache#cache.pendingReqs), {ReqID, Key, Value}),
+		io:format("Triggered~n"),
+	   	gen_server:reply(get_first(dict:fetch(ReqID, Cache#cache.pendingReqs)), {ReqID, Key, Value}),
 		R0 = dict:erase(ReqID, Cache#cache.pendingReqs);
 		true ->
 		R0 = Cache#cache.pendingReqs
 	end,
-	{noreply, Cache#cache{kv=K1, lease=L1, pendingReqs=R0}}.
+	io:format("Value updated~n"),
+	{reply, {ok}, Cache#cache{kv=K1, lease=L1, pendingReqs=R0}}.
 
 % We get compile warnings from gen_server unless we define these
 handle_cast(_Message, Library) -> {noreply, Library}.

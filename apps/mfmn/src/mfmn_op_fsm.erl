@@ -32,6 +32,7 @@ start_link(ReqID, From, Op, Fetch, Key) ->
     start_link(ReqID, From, Op, Fetch, Key, undefined).
 
 start_link(ReqID, From, Op, Fetch, Key, Val) ->
+    io:format('The worker is about to start~n'),
     gen_fsm:start_link(?MODULE, [ReqID, From, Op, Fetch, Key, Val], []).
 
 %%%===================================================================
@@ -40,7 +41,6 @@ start_link(ReqID, From, Op, Fetch, Key, Val) ->
 
 %% @doc Initialize the state data.
 init([ReqID, From, Op, Fetch, Key, Val]) ->
-    io:format("Op FSM inited~n"),
     SD = #state{req_id=ReqID,
                 from=From,
 		op=Op,
@@ -51,10 +51,9 @@ init([ReqID, From, Op, Fetch, Key, Val]) ->
 
 %% @doc Prepare the write by calculating the _preference list_.
 prepare(timeout, SD0=#state{key=Key}) ->
-    io:format("FSM preparing...~n"),
     DocIdx = riak_core_util:chash_key({<<"basic">>,
                                        term_to_binary(Key)}),
-    Preflist = riak_core_apl:get_apl(DocIdx, ?N, mfmn_vnode),
+    Preflist = riak_core_apl:get_apl(DocIdx, ?N, mfmn),
     SD = SD0#state{preflist=Preflist},
     {next_state, execute, SD, 0}.
 
@@ -80,9 +79,8 @@ execute(timeout, SD0=#state{req_id=ReqID,
     end.
 
 %% @doc Waits for 1 write reqs to respond.
-waiting({ok, ReqID, Val, Lease}, SD0=#state{from=From, key=Key}) ->
+waiting({ReqID, Val, Lease}, SD0=#state{from=From, key=Key}) ->
     SD = SD0#state{val=Val},
-    io:format("Got result from VNode~n"),
     mfmn_cache:add_key(From, ReqID, Key, Val, Lease),
     {stop, normal, SD};
 

@@ -23,7 +23,7 @@
         ]).
 
 
--record(state, {partition, kv=dict:new()}).
+-record(state, {partition, kv}).
 
 -define(MASTER, mfmn_vnode_master).
 
@@ -44,33 +44,35 @@ start_vnode(I) ->
     riak_core_vnode_master:get_vnode_pid(I, ?MODULE).
 
 init([Partition]) ->
-    {ok, #state { partition=Partition }}.
+    {ok, #state{partition=Partition, kv=dict:new()}}.
 
 %% Sample command: respond to a ping
 handle_command(ping, _Sender, State) ->
     {reply, {pong, State#state.partition}, State};
 handle_command({get, ReqID, Key}, _Sender, State) ->
-    case dict:find(Key) of
+    case dict:find(Key, State#state.kv) of
 	{ok, Value} ->
-	  {reply, {ReqID, Value, 30}, State};
-	{error} ->
+	  {reply, {ReqID, get_first(Value), 5}, State};
+	error ->
 	  {reply, {error, no_key}, State}
     end;
     
 
 handle_command({inc, ReqID, Fetch, Key, Value}, _Sender, State) ->
-    case dict:find(Key) of
-	{ok, Old_value} ->
+    io:format('I am a vnode and I have receive the inc operation~n'),
+    case dict:find(Key, State#state.kv) of
+	{ok, Value_list} ->
+	    Old_value = get_first(Value_list),
 	    NewValue=Old_value + Value,
     	    D0 = dict:erase(Key, State#state.kv),
     	    D1 = dict:append(Key, NewValue, D0);
-	{error} ->
+	error ->
     	    D1 = dict:append(Key, Value, State#state.kv),
 	    NewValue=Value
     end,
     if 
 	Fetch =:= true ->
-	  {reply, {ReqID, NewValue, 30}, State#state{kv=D1}};
+	  {reply, {ReqID, NewValue, 5}, State#state{kv=D1}};
         true ->
 	  {noreply, State#state{kv=D1}}
     end;
@@ -114,3 +116,6 @@ handle_exit(_Pid, _Reason, State) ->
 
 terminate(_Reason, _State) ->
     ok.
+get_first(List) ->
+   [Value|_] = List,
+    Value.

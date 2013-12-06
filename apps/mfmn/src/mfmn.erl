@@ -16,6 +16,7 @@
 ping() ->
     DocIdx = riak_core_util:chash_key({<<"ping">>, term_to_binary(now())}),
     PrefList = riak_core_apl:get_primary_apl(DocIdx, 1, mfmn),
+    io:format("Printing preflist:~w~n",[PrefList]),
     [{IndexNode, _Type}] = PrefList,
     riak_core_vnode_master:sync_spawn_command(IndexNode, ping, mfmn_vnode_master).
 
@@ -40,8 +41,8 @@ read(Key)->
 
 wait_for_reqid(ReqID, Timeout) ->
     receive
-        {ReqID, Key, Value} -> {Key, Value};
-        _ -> {error, unhandled_message}
+        {_, {ReqID, Key, Value}} -> {Key, Value};
+        _ -> {error, unhandled_message_client}
     after Timeout ->
             {error, timeout}
     end.
