@@ -24,7 +24,7 @@
 
 
 -record(state, {partition, kv}).
--record(value, {times, value}).
+-record(value, {queue, lease, value}).
 
 -define(MASTER, mfmn_vnode_master).
 
@@ -53,29 +53,47 @@ handle_command(ping, _Sender, State) ->
 handle_command({get, ReqID, Key}, _Sender, State) ->
     case dict:find(Key, State#state.kv) of
 	{ok, Value} ->
-	  {reply, {ReqID, get_first(Value), 5}, State};
+    	  TStamp=get_time_inseconds(),
+	  R1 = get_first(Value),
+	  Q = R1#value.queue,
+	  Lease = erlang:trunc((TStamp - queue:get(Q))/(queue:len(Q) - 1)),
+	  R2= #value{queue=Q, lease=Lease, value=R1#value.value},
+    	  D0 = dict:erase(Key, State#state.kv),
+    	  D1 = dict:append(Key, R2, D0),
+	  {reply, {ReqID, R2#value.value, Lease}, State#state{kv=D1}};
 	error ->
 	  {reply, {error, no_key}, State}
     end;
     
 
 handle_command({inc, ReqID, Fetch, Key, Value}, _Sender, State) ->
+    TStamp=get_time_inseconds(),
     case dict:find(Key, State#state.kv) of
 	{ok, Value_list} ->
 	    Old_record = get_first(Value_list),
-		
 	    NewValue=Old_record#value.value + Value,
-	    New_queue=Old_record#value.times
-	    Record= #value{times=,value=NewValue},
+	    Q1=Old_record#value.queue,
+	    Length = queue:len(Q1),
+	    if Length>=?L ->
+		{_,Q2} = queue:out(Q1),
+		Q3 = queue:in(TStamp, Q2);
+	    true->
+		Q3 = queue:in(TStamp, Q1)
+   	    end,
+	    Lease = erlang:trunc((TStamp - queue:get(Q3))/(queue:len(Q3) - 1)),
+	    Record= #value{queue=Q3, lease=Lease, value=NewValue},
     	    D0 = dict:erase(Key, State#state.kv),
-    	    D1 = dict:append(Key, NewValue, D0);
+    	    D1 = dict:append(Key, Record, D0);
 	error ->
-    	    D1 = dict:append(Key, Value, State#state.kv),
+	    Q1=queue:new(),
+	    Lease = ?DefaultL,
+	    Record= #value{queue=queue:in(TStamp, Q1), lease=Lease, value=Value},
+    	    D1 = dict:append(Key, Record, State#state.kv),
 	    NewValue=Value
     end,
     if 
 	Fetch =:= true ->
-	  {reply, {ReqID, NewValue, 5}, State#state{kv=D1}};
+	  {reply, {ReqID, NewValue, Lease}, State#state{kv=D1}};
         true ->
 	  {noreply, State#state{kv=D1}}
     end;
@@ -121,8 +139,7 @@ terminate(_Reason, _State) ->
     ok.
 
 %private functions
-get_first(List) ->
-   [Value|_] = List,
-    Value.
+get_first([Value|_]) -> Value.
 
-get_time_insecond() -> calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
+get_time_inseconds() -> calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
+   
