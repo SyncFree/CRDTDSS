@@ -24,6 +24,7 @@
 
 
 -record(state, {partition, kv}).
+-record(value, {times, value}).
 
 -define(MASTER, mfmn_vnode_master).
 
@@ -59,11 +60,13 @@ handle_command({get, ReqID, Key}, _Sender, State) ->
     
 
 handle_command({inc, ReqID, Fetch, Key, Value}, _Sender, State) ->
-    io:format('I am a vnode and I have receive the inc operation~n'),
     case dict:find(Key, State#state.kv) of
 	{ok, Value_list} ->
-	    Old_value = get_first(Value_list),
-	    NewValue=Old_value + Value,
+	    Old_record = get_first(Value_list),
+		
+	    NewValue=Old_record#value.value + Value,
+	    New_queue=Old_record#value.times
+	    Record= #value{times=,value=NewValue},
     	    D0 = dict:erase(Key, State#state.kv),
     	    D1 = dict:append(Key, NewValue, D0);
 	error ->
@@ -116,6 +119,10 @@ handle_exit(_Pid, _Reason, State) ->
 
 terminate(_Reason, _State) ->
     ok.
+
+%private functions
 get_first(List) ->
    [Value|_] = List,
     Value.
+
+get_time_insecond() -> calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
