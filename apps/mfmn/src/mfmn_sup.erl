@@ -30,6 +30,10 @@ init(_Args) ->
                   {mfmn_op_worker_sup, start_link, []},
                   permanent, 5000, supervisor, [mfmn_op_worker_sup]},
 
+   OpsVclockSup = { mfmn_op_worker_vclock_sup,
+                  {mfmn_op_worker_vclock_sup, start_link, []},
+                  permanent, 5000, supervisor, [mfmn_op_worker_vclock_sup]},
+
    { ok,
         { {one_for_one, 5, 10},
-          [VMaster, CacheSup, OpsSup]}}.
+          [VMaster, CacheSup, OpsSup, OpsVclockSup]}}.

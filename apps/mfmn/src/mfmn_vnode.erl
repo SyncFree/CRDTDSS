@@ -19,6 +19,7 @@
 
 -export([
          get/4,
+	 getV/4,
          inc/5
         ]).
 
@@ -40,6 +41,12 @@ get(Preflist, ReqID, _, Key) ->
                                    {fsm, undefined, self()},
                                    ?MASTER).
 
+getV(Preflist, ReqID, Vclock, Key) ->
+    riak_core_vnode_master:command(Preflist,
+                                   {get, ReqID, Vclock, Key},
+                                   {fsm, undefined, self()},
+                                   ?MASTER).
+
 %% API
 start_vnode(I) ->
     riak_core_vnode_master:get_vnode_pid(I, ?MODULE).
@@ -50,6 +57,22 @@ init([Partition]) ->
 %% Sample command: respond to a ping
 handle_command(ping, _Sender, State) ->
     {reply, {pong, State#state.partition}, State};
+
+handle_command({get, ReqID, _, Key}, _Sender, State) ->
+    case dict:find(Key, State#state.kv) of
+	{ok, Value} ->
+    	  TStamp=get_time_inseconds(),
+	  R1 = get_first(Value),
+	  Q = R1#value.queue,
+	  Lease = erlang:trunc((TStamp - queue:get(Q))/(queue:len(Q) - 1)),
+	  R2= #value{queue=Q, lease=Lease, value=R1#value.value},
+    	  D0 = dict:erase(Key, State#state.kv),
+    	  D1 = dict:append(Key, R2, D0),
+	  {reply, {ReqID, R2#value.value, Lease}, State#state{kv=D1}};
+	error ->
+	  {reply, {error, no_key}, State}
+    end;
+
 handle_command({get, ReqID, Key}, _Sender, State) ->
     case dict:find(Key, State#state.kv) of
 	{ok, Value} ->
