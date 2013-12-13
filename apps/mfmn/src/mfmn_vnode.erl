@@ -25,23 +25,23 @@
 
 
 -record(state, {partition, kv}).
--record(value, {queue, lease, value}).
+-record(value, {queue, lease, value, vclock :: vclock:vclock()}).
 
 -define(MASTER, mfmn_vnode_master).
 
-inc(Preflist, ReqID, Fetch, Key, Value) ->
+inc(Preflist, {ReqID, Coordinator}, Fetch, Key, Value) ->
     riak_core_vnode_master:command(Preflist,
-                                   {inc, ReqID, Fetch, Key, Value},
+                                   {inc, ReqID, Coordinator, Fetch, Key, Value},
                                    {fsm, undefined, self()},
                                    ?MASTER).
 
-get(Preflist, ReqID, _, Key) ->
+get(Preflist, {ReqID, _}, _, Key) ->
     riak_core_vnode_master:command(Preflist,
                                    {get, ReqID, Key},
                                    {fsm, undefined, self()},
                                    ?MASTER).
 
-getV(Preflist, ReqID, Vclock, Key) ->
+getV(Preflist, {ReqID, _}, Vclock, Key) ->
     riak_core_vnode_master:command(Preflist,
                                    {get, ReqID, Vclock, Key},
                                    {fsm, undefined, self()},
@@ -58,17 +58,22 @@ init([Partition]) ->
 handle_command(ping, _Sender, State) ->
     {reply, {pong, State#state.partition}, State};
 
-handle_command({get, ReqID, _, Key}, _Sender, State) ->
+handle_command({get, ReqID, Vclock, Key}, _Sender, State) ->
     case dict:find(Key, State#state.kv) of
 	{ok, Value} ->
     	  TStamp=get_time_inseconds(),
 	  R1 = get_first(Value),
 	  Q = R1#value.queue,
 	  Lease = erlang:trunc((TStamp - queue:get(Q))/(queue:len(Q) - 1)),
-	  R2= #value{queue=Q, lease=Lease, value=R1#value.value},
+	  R2= #value{queue=Q, lease=Lease, value=R1#value.value, vclock=R1#value.vclock},
     	  D0 = dict:erase(Key, State#state.kv),
     	  D1 = dict:append(Key, R2, D0),
-	  {reply, {ReqID, R2#value.value, Lease}, State#state{kv=D1}};
+	  Guard = vclock:descends(Vclock, R2#value.vclock),
+	  if Guard ->			
+	  	{reply, {ReqID, R2#value.value, Lease}, State#state{kv=D1}};
+	  true ->
+	  	{reply, {error, no_updated}, State#state{kv=D1}}
+	  end;
 	error ->
 	  {reply, {error, no_key}, State}
     end;
@@ -89,12 +94,13 @@ handle_command({get, ReqID, Key}, _Sender, State) ->
     end;
     
 
-handle_command({inc, ReqID, Fetch, Key, Value}, _Sender, State) ->
+handle_command({inc, ReqID, Coordinator, Fetch, Key, Value}, _Sender, State) ->
     TStamp=get_time_inseconds(),
     case dict:find(Key, State#state.kv) of
 	{ok, Value_list} ->
 	    Old_record = get_first(Value_list),
 	    NewValue=Old_record#value.value + Value,
+	    VC=Old_record#value.vclock,
 	    Q1=Old_record#value.queue,
 	    Length = queue:len(Q1),
 	    if Length>=?L ->
@@ -104,13 +110,14 @@ handle_command({inc, ReqID, Fetch, Key, Value}, _Sender, State) ->
 		Q3 = queue:in(TStamp, Q1)
    	    end,
 	    Lease = erlang:trunc((TStamp - queue:get(Q3))/(queue:len(Q3) - 1)),
-	    Record= #value{queue=Q3, lease=Lease, value=NewValue},
+	    Record= #value{queue=Q3, lease=Lease, value=NewValue, vclock=vclock:increment(Coordinator,VC)},
     	    D0 = dict:erase(Key, State#state.kv),
     	    D1 = dict:append(Key, Record, D0);
 	error ->
+	    VC=vclock:increment(Coordinator,vclock:fresh()),
 	    Q1=queue:new(),
 	    Lease = ?DefaultL,
-	    Record= #value{queue=queue:in(TStamp, Q1), lease=Lease, value=Value},
+	    Record= #value{queue=queue:in(TStamp, Q1), lease=Lease, value=Value, vclock=VC},
     	    D1 = dict:append(Key, Record, State#state.kv),
 	    NewValue=Value
     end,

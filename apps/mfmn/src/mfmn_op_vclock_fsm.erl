@@ -17,11 +17,12 @@
 
 -record(state, {req_id :: pos_integer(),
                 from :: pid(),
+		coordinator :: node(),
 		op :: atom(),
 		vclock,
 		key,
                 preflist :: riak_core_apl:preflist2(),
-                num_w = 0 :: non_neg_integer()}).
+                num_r = 0 :: non_neg_integer()}).
 
 %%%===================================================================
 %%% API
@@ -38,6 +39,7 @@ start_link(ReqID, From, Op, Vclock, Key) ->
 init([ReqID, From, Op, Vclock, Key]) ->
     SD = #state{req_id=ReqID,
                 from=From,
+		coordinator=node(),
 		op=Op,
 		vclock=Vclock,
                 key=Key},
@@ -54,11 +56,12 @@ prepare(timeout, SD0=#state{key=Key}) ->
 %% @doc Execute the write request and then go into waiting state to
 %% verify it has meets consistency requirements.
 execute(timeout, SD0=#state{req_id=ReqID,
+			    coordinator=Coordinator,
                             op=Op,
 			    vclock=Vclock,
 			    key=Key,
                             preflist=Preflist}) ->
-    mfmn_vnode:Op(Preflist, ReqID, Vclock, Key),
+    mfmn_vnode:Op(Preflist, {ReqID, Coordinator}, Vclock, Key),
     {next_state, waiting, SD0}.
 
 %% @doc Waits for 1 write reqs to respond.
@@ -67,9 +70,21 @@ waiting({ReqID, Val, Lease}, SD0=#state{from=From, key=Key}) ->
     mfmn_cache:add_key(From, ReqID, Key, Val, Lease),
     {stop, normal, SD0};
 
-waiting({error, no_key}, SD) ->
-    {stop, normal, SD}.
-    
+waiting({error, no_updated}, SD=#state{num_r=R}) ->
+    NewR = R + 1,
+    if NewR == ?N ->
+        {stop, normal, SD#state{num_r=NewR}};
+    true ->
+        {next_state, waiting, SD#state{num_r=NewR}}
+    end;
+
+waiting({error, no_key}, SD=#state{num_r=R}) ->
+    NewR = R + 1,
+    if NewR == ?N ->
+        {stop, normal, SD#state{num_r=NewR}};
+    true ->
+        {next_state, waiting, SD#state{num_r=NewR}}
+    end.
 
 handle_info(_Info, _StateName, StateData) ->
     {stop,badmsg,StateData}.
