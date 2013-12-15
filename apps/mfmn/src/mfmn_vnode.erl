@@ -18,32 +18,40 @@
          handle_exit/3]).
 
 -export([
-         get/4,
-	 getV/4,
-         inc/5
+	new/5,
+         value/4,
+	 valueV/4,
+         update/5
         ]).
 
 
 -record(state, {partition, kv}).
--record(value, {queue, lease, value}).
+%-record(crdt, {type, data}).
+-record(value, {queue, lease, crdt}).
 
 -define(MASTER, mfmn_vnode_master).
 
-inc(Preflist, ReqID, Fetch, Key, Value) ->
+new(Preflist, ReqID, _, Key, Type) ->
     riak_core_vnode_master:command(Preflist,
-                                   {inc, ReqID, Fetch, Key, Value},
+				  {new, ReqID, Key, Type},
+				   {fsm, undefined, self()},
+				   ?MASTER).
+
+update(Preflist, ReqID, Fetch, Key, Param) ->
+    riak_core_vnode_master:command(Preflist,
+                                   {update, ReqID, Fetch, Key, Param},
                                    {fsm, undefined, self()},
                                    ?MASTER).
 
-get(Preflist, ReqID, _, Key) ->
+value(Preflist, ReqID, _, Key) ->
     riak_core_vnode_master:command(Preflist,
-                                   {get, ReqID, Key},
+                                   {value, ReqID, Key},
                                    {fsm, undefined, self()},
                                    ?MASTER).
 
-getV(Preflist, ReqID, Vclock, Key) ->
+valueV(Preflist, ReqID, Vclock, Key) ->
     riak_core_vnode_master:command(Preflist,
-                                   {get, ReqID, Vclock, Key},
+                                   {value, ReqID, Vclock, Key},
                                    {fsm, undefined, self()},
                                    ?MASTER).
 
@@ -58,43 +66,52 @@ init([Partition]) ->
 handle_command(ping, _Sender, State) ->
     {reply, {pong, State#state.partition}, State};
 
-handle_command({get, ReqID, _, Key}, _Sender, State) ->
+handle_command({value, ReqID, _, Key}, _Sender, State) ->
     case dict:find(Key, State#state.kv) of
 	{ok, Value} ->
     	  TStamp=get_time_inseconds(),
 	  R1 = get_first(Value),
 	  Q = R1#value.queue,
 	  Lease = erlang:trunc((TStamp - queue:get(Q))/(queue:len(Q) - 1)),
-	  R2= #value{queue=Q, lease=Lease, value=R1#value.value},
+	  R2= #value{queue=Q, lease=Lease, crdt=R1#value.crdt},
     	  D0 = dict:erase(Key, State#state.kv),
     	  D1 = dict:append(Key, R2, D0),
-	  {reply, {ReqID, R2#value.value, Lease}, State#state{kv=D1}};
+	  Reply_value = mfmn_crdt_controller:value(R1#value.crdt),
+	  {reply, {ReqID, Reply_value, Lease}, State#state{kv=D1}};
 	error ->
 	  {reply, {error, no_key}, State}
     end;
 
-handle_command({get, ReqID, Key}, _Sender, State) ->
+handle_command({value, ReqID, Key}, _Sender, State) ->
     case dict:find(Key, State#state.kv) of
 	{ok, Value} ->
     	  TStamp=get_time_inseconds(),
 	  R1 = get_first(Value),
 	  Q = R1#value.queue,
 	  Lease = erlang:trunc((TStamp - queue:get(Q))/(queue:len(Q) - 1)),
-	  R2= #value{queue=Q, lease=Lease, value=R1#value.value},
+	  R2= #value{queue=Q, lease=Lease, crdt=R1#value.crdt},
     	  D0 = dict:erase(Key, State#state.kv),
     	  D1 = dict:append(Key, R2, D0),
-	  {reply, {ReqID, R2#value.value, Lease}, State#state{kv=D1}};
+	  Reply_value = mfmn_crdt_controller:value(R1#value.crdt),
+	  {reply, {ReqID, Reply_value, Lease}, State#state{kv=D1}};
 	error ->
 	  {reply, {error, no_key}, State}
     end;
-    
 
-handle_command({inc, ReqID, Fetch, Key, Value}, _Sender, State) ->
+handle_command({new, ReqID, Key, Type}, _Sender, State) ->
+	io:format("Handling New key: ~w~w",[Key, Type]),
+	CRDT = mfmn_crdt_controller:new(Type),
+	R = #value{queue=queue:new(), lease=?DefaultL, crdt= CRDT},
+	D0 = dict:append(Key, R, State#state.kv),
+	{reply, {ReqID, mfmn_crdt_controller:value(CRDT), ?DefaultL}, State#state{kv=D0}};    
+
+handle_command({update, ReqID, Fetch, Key, Param}, _Sender, State) ->
     TStamp=get_time_inseconds(),
     case dict:find(Key, State#state.kv) of
 	{ok, Value_list} ->
 	    Old_record = get_first(Value_list),
-	    NewValue=Old_record#value.value + Value,
+	    NewCRDT = mfmn_crdt_controller:update(Old_record#value.crdt, Param, _Sender),
+	    NewValue = mfmn_crdt_controller:value(NewCRDT),
 	    Q1=Old_record#value.queue,
 	    Length = queue:len(Q1),
 	    if Length>=?L ->
@@ -103,16 +120,19 @@ handle_command({inc, ReqID, Fetch, Key, Value}, _Sender, State) ->
 	    true->
 		Q3 = queue:in(TStamp, Q1)
    	    end,
-	    Lease = erlang:trunc((TStamp - queue:get(Q3))/(queue:len(Q3) - 1)),
-	    Record= #value{queue=Q3, lease=Lease, value=NewValue},
+	    Lease = erlang:trunc((TStamp - queue:get(Q3)) / max(queue:len(Q3) - 1, 1)),
+	    Record= #value{queue=Q3, lease=Lease, crdt= NewCRDT},
     	    D0 = dict:erase(Key, State#state.kv),
     	    D1 = dict:append(Key, Record, D0);
 	error ->
+	    %Lease =
+	    %D1 = State#state.kv,
+	    %io:format("Error!Item not created!~n")
 	    Q1=queue:new(),
 	    Lease = ?DefaultL,
-	    Record= #value{queue=queue:in(TStamp, Q1), lease=Lease, value=Value},
+	    Record= #value{queue=queue:in(TStamp, Q1), lease=Lease, crdt=mfmn_crdt_controller:new(undefined)},
     	    D1 = dict:append(Key, Record, State#state.kv),
-	    NewValue=Value
+	    NewValue=Param
     end,
     if 
 	Fetch =:= true ->

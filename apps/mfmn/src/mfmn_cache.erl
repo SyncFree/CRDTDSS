@@ -2,9 +2,10 @@
 -behavior(gen_server).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([start_link/0, put/2, get/1, add_key/5, inc/2]).
+-export([start_link/0, put/2, new/2, value/1, add_key/5, update/2]).
 
--record(cache , {kv, lease, pendingReqs}). 
+-record(value, {lease, crdt}).
+-record(cache , {kv, pendingReqs}). 
 
 % These are all wrappers for calls to the server
 
@@ -14,21 +15,24 @@ start_link() ->
 put(Key, Value) ->
    gen_server:call(?MODULE, {put, Key, Value}).
 
-inc(Key, Value) ->
-   gen_server:call(?MODULE, {inc, Key, Value}).
+new(Key, Type) ->
+   gen_server:call(?MODULE, {new, Key, Type}).
 
-get(Key) ->
-   gen_server:call(?MODULE, {get, Key}).
+update(Key, Param) ->
+   gen_server:call(?MODULE, {update, Key, Param}).
 
-add_key(PID, ReqID, Key, Value, Lease ) ->
+value(Key) ->
+   gen_server:call(?MODULE, {value, Key}).
+
+add_key(PID, ReqID, Key, CRDT, Lease ) ->
    io:format("Calling add key"),
-   gen_server:call(PID, {updateKey, Key, Value, Lease, ReqID}),
+   gen_server:call(PID, {updateKey, Key, CRDT, Lease, ReqID}),
    io:format("Returning add key").
    
 
 % This is called when a connection is made to the server
 init([]) ->
-	{ok, #cache{kv=dict:new(), lease=dict:new(), pendingReqs=dict:new()}}.
+	{ok, #cache{kv=dict:new(), pendingReqs=dict:new()}}.
 
 % handle_call is invoked in response to gen_server:call
 % handle_call({put, Key, Value}, _From, Cache) ->
@@ -43,58 +47,69 @@ init([]) ->
 %        end,
 %	{reply, {ok}, C1};
 
-handle_call({inc, Key, Value}, _From, Cache) ->
+handle_call({new, Key, Type}, _From, Cache) ->
+	ReqID = get_reqid(),
+	CRDT = mfmn_crdt_controller:new(Type),
+	Lease = get_time_insecond() - 1,
+	C0 = dict:append(Key,  #value{lease=Lease, crdt=CRDT}, Cache#cache.kv),
+	mfmn_op_worker_sup:start_op_fsm([ReqID, self(), new, true, Key, Type]),
+	{reply, {ok, ReqID}, Cache#cache{kv=C0}};
+
+
+handle_call({update, Key, Param}, _From, Cache) ->
 	ReqID = get_reqid(),
 	case dict:find(Key, Cache#cache.kv) of
           {ok, Value_list} ->
-	    io:format("Has value"),
 	    Old_value = get_first(Value_list),
             C0 = dict:erase(Key, Cache#cache.kv),
-            C1 = dict:append(Key, Old_value + Value, C0),
-            L0 = Cache#cache.lease,
-	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), inc, false, Key, Value]);
+	    %io:format("Has value~w~w~w~n",[Old_value#value.crdt, Param, self()]),
+	    New_CRDT = mfmn_crdt_controller:update(Old_value#value.crdt, Param, self()),
+            C1 = dict:append(Key, #value{lease=Old_value#value.lease, crdt= New_CRDT}, C0),
+	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), update, false, Key, Param]);
           error ->
 	    io:format("Fetching values from remote~n"),
-	    C1 = dict:append(Key, Value, Cache#cache.kv),
-	    Lease = get_time_insecond()+0,
+	    C1 = dict:append(Key, Param, Cache#cache.kv),
+	    Lease = get_time_insecond()-1,
 	    io:format("Lease of current key:~w~n",[Lease]),
-	    L0 = dict:append(Key, Lease, Cache#cache.lease),
-	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), inc, true, Key, Value])
+	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), update, true, Key, Param])
           end,
-	{reply, {ok, ReqID}, Cache#cache{kv = C1, lease= L0}};
+	{reply, {ok, ReqID}, Cache#cache{kv = C1}};
 
-handle_call({get, Key}, _From, Cache) ->
+handle_call({value, Key}, _From, Cache) ->
 	ReqID = get_reqid(),
 	case dict:is_key(Key, Cache#cache.kv) of
          true ->
 		Time = get_time_insecond(),
-		Lease = get_first(dict:fetch(Key, Cache#cache.lease)),
+		Data = get_first(dict:fetch(Key, Cache#cache.kv)),
+		Lease = Data#value.lease,
 		io:format("Now:~w Lease:~w ~n",[Time, Lease]),
 		if  Time =< Lease ->
 		    %if 1 =:= 1 ->
 			io:format("Lease has not expired!"),
-			Value = get_first(dict:fetch(Key, Cache#cache.kv)),
+			%CRDT = get_first(dict:fetch(Key, Cache#cache.kv)),
+			Value = mfmn_crdt_controller:value(Data#value.crdt),
 			{reply, {ok, Value}, Cache};
 		    true ->
 			io:format("Fetching from remote..."),
-			mfmn_op_worker_sup:start_op_fsm([ReqID, self(), get, true, Key, undefined]),
+			mfmn_op_worker_sup:start_op_fsm([ReqID, self(), value, true, Key, undefined]),
 			%%When receives some message
 			PQ = dict:append(ReqID, _From, Cache#cache.pendingReqs),
 		    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}}
 		    end;
          false ->
-		mfmn_op_worker_sup:start_op_fsm([ReqID, self(), get, true, Key, undefined]),
+		mfmn_op_worker_sup:start_op_fsm([ReqID, self(), value, true, Key, undefined]),
 		%%When receives some message
 		PQ = dict:append(ReqID, _From, Cache#cache.pendingReqs),
 	    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}}
         end;
 
+%%TODO: Need to figure out what value to update
 handle_call({updateKey, Key, Value, Lease, ReqID}, _From, Cache) ->
 	io:format("received updated value~n"),
+	CRDT = get_first(dict:fetch(Key, Cache#cache.kv)),
+	NewCRDT = CRDT#value{lease = Lease + get_time_insecond()},
 	K0 = dict:erase(Key, Cache#cache.kv),
-	L0 = dict:erase(Key, Cache#cache.lease),
-	K1 = dict:append(Key, Value, K0),
-	L1 = dict:append(Key, Lease + get_time_insecond(), L0),
+	K1 = dict:append(Key, NewCRDT, K0),
 	IsKey = dict:is_key(ReqID, Cache#cache.pendingReqs),
 	if IsKey=:=true ->
 		io:format("Triggered~n"),
@@ -104,7 +119,7 @@ handle_call({updateKey, Key, Value, Lease, ReqID}, _From, Cache) ->
 		R0 = Cache#cache.pendingReqs
 	end,
 	io:format("Value updated~n"),
-	{reply, {ok}, Cache#cache{kv=K1, lease=L1, pendingReqs=R0}}.
+	{reply, {ok}, Cache#cache{kv= K1, pendingReqs=R0}}.
 
 % We get compile warnings from gen_server unless we define these
 handle_cast(_Message, Library) -> {noreply, Library}.
