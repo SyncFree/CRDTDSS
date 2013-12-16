@@ -93,8 +93,9 @@ update({add_all, Elems}, Actor, GSet) ->
 %TODO: Merge has some problem for sure :P
 -spec merge(gset(), gset()) -> gset().
 merge(GSet1, GSet2) ->
+    NVC = vclock:merge([GSet1#gset.vclock, GSet2#gset.vclock]),
     NSet = ordsets:union(GSet1#gset.set, GSet2#gset.set),
-    {ok, GSet1#gset{set= NSet}}.
+    #gset{set= NSet, vclock= NVC}.
 
 -spec equal(gset(), gset()) -> boolean().
 equal(GSet1, GSet2) ->

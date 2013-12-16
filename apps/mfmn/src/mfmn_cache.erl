@@ -19,15 +19,15 @@ new(Key, Type) ->
    gen_server:call(?MODULE, {new, Key, Type}).
 
 update(Key, Param) ->
-   gen_server:call(?MODULE, {update, Key, Param}).
+   gen_server:call(?MODULE, {update, Key, {Param, node()}}).
 
 value(Key) ->
    gen_server:call(?MODULE, {value, Key}).
 
 add_key(PID, ReqID, Key, CRDT, Lease ) ->
-   io:format("Calling add key"),
+   io:format("Calling add key~n"),
    gen_server:call(PID, {updateKey, Key, CRDT, Lease, ReqID}),
-   io:format("Returning add key").
+   io:format("Returning add key~n").
    
 
 % This is called when a connection is made to the server
@@ -51,36 +51,37 @@ handle_call({new, Key, Type}, _From, Cache) ->
 	ReqID = get_reqid(),
 	CRDT = mfmn_crdt_controller:new(Type),
 	Lease = get_time_insecond() - 1,
-	C0 = dict:append(Key,  #value{lease=Lease, crdt=CRDT}, Cache#cache.kv),
+	C0 =  mfmn_map:put(Key, #value{lease=Lease, crdt= CRDT}, Cache#cache.kv),
+        %dict:append(Key,  #value{lease=Lease, crdt=CRDT}, Cache#cache.kv),
 	mfmn_op_worker_sup:start_op_fsm([ReqID, self(), new, true, Key, Type]),
 	{reply, {ok, ReqID}, Cache#cache{kv=C0}};
 
 
 handle_call({update, Key, Param}, _From, Cache) ->
 	ReqID = get_reqid(),
-	case dict:find(Key, Cache#cache.kv) of
-          {ok, Value_list} ->
-	    Old_value = get_first(Value_list),
-            C0 = dict:erase(Key, Cache#cache.kv),
+	case mfmn_map:find(Key, Cache#cache.kv) of
+          {ok, Old_value} ->
+            %C0 = dict:erase(Key, Cache#cache.kv),
 	    %io:format("Has value~w~w~w~n",[Old_value#value.crdt, Param, self()]),
-	    New_CRDT = mfmn_crdt_controller:update(Old_value#value.crdt, Param, self()),
-            C1 = dict:append(Key, #value{lease=Old_value#value.lease, crdt= New_CRDT}, C0),
+	    New_CRDT = mfmn_crdt_controller:update(Old_value#value.crdt, Param),
+            C1 = mfmn_map:put(Key, #value{lease=Old_value#value.lease, crdt= New_CRDT}, Cache#cache.kv),
 	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), update, false, Key, Param]);
           error ->
 	    io:format("Fetching values from remote~n"),
-	    C1 = dict:append(Key, Param, Cache#cache.kv),
-	    Lease = get_time_insecond()-1,
-	    io:format("Lease of current key:~w~n",[Lease]),
+	    C1 = Cache#cache.kv,
+	    %C1 = dict:append(Key, Param, Cache#cache.kv),
+	    %Lease = get_time_insecond()-1,
+	    %io:format("Lease of current key:~w~n",[Lease]),
 	    mfmn_op_worker_sup:start_op_fsm([ReqID, self(), update, true, Key, Param])
           end,
 	{reply, {ok, ReqID}, Cache#cache{kv = C1}};
 
 handle_call({value, Key}, _From, Cache) ->
 	ReqID = get_reqid(),
-	case dict:is_key(Key, Cache#cache.kv) of
+	case mfmn_map:is_key(Key, Cache#cache.kv) of
          true ->
 		Time = get_time_insecond(),
-		Data = get_first(dict:fetch(Key, Cache#cache.kv)),
+		Data = mfmn_map:get(Key, Cache#cache.kv),
 		Lease = Data#value.lease,
 		io:format("Now:~w Lease:~w ~n",[Time, Lease]),
 		if  Time =< Lease ->
@@ -93,28 +94,28 @@ handle_call({value, Key}, _From, Cache) ->
 			io:format("Fetching from remote..."),
 			mfmn_op_worker_sup:start_op_fsm([ReqID, self(), value, true, Key, undefined]),
 			%%When receives some message
-			PQ = dict:append(ReqID, _From, Cache#cache.pendingReqs),
+			PQ = mfmn_map:put(ReqID, _From, Cache#cache.pendingReqs),
 		    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}}
 		    end;
          false ->
 		mfmn_op_worker_sup:start_op_fsm([ReqID, self(), value, true, Key, undefined]),
 		%%When receives some message
-		PQ = dict:append(ReqID, _From, Cache#cache.pendingReqs),
+		PQ = mfmn_map:put(ReqID, _From, Cache#cache.pendingReqs),
 	    	{reply, {wait, ReqID}, Cache#cache{pendingReqs= PQ}}
         end;
 
 %%TODO: Need to figure out what value to update
-handle_call({updateKey, Key, Value, Lease, ReqID}, _From, Cache) ->
-	io:format("received updated value~n"),
-	CRDT = get_first(dict:fetch(Key, Cache#cache.kv)),
-	NewCRDT = CRDT#value{lease = Lease + get_time_insecond()},
-	K0 = dict:erase(Key, Cache#cache.kv),
-	K1 = dict:append(Key, NewCRDT, K0),
-	IsKey = dict:is_key(ReqID, Cache#cache.pendingReqs),
+handle_call({updateKey, Key, CRDT, Lease, ReqID}, _From, Cache) ->
+	io:format("received updated value ~w  ~n",[CRDT]),
+	CRDT_record = #value{crdt = CRDT, lease = Lease + get_time_insecond()},
+	%K0 = dict:erase(Key, Cache#cache.kv),
+	K1 = mfmn_map:put(Key, CRDT_record, Cache#cache.kv),
+	IsKey = mfmn_map:is_key(ReqID, Cache#cache.pendingReqs),
 	if IsKey=:=true ->
 		io:format("Triggered~n"),
-	   	gen_server:reply(get_first(dict:fetch(ReqID, Cache#cache.pendingReqs)), {ReqID, Key, Value}),
-		R0 = dict:erase(ReqID, Cache#cache.pendingReqs);
+		Value = mfmn_crdt_controller:value(CRDT),
+	   	gen_server:reply(mfmn_map:get(ReqID, Cache#cache.pendingReqs), {ReqID, Key, Value}),
+		R0 = mfmn_map:erase(ReqID, Cache#cache.pendingReqs);
 		true ->
 		R0 = Cache#cache.pendingReqs
 	end,
@@ -130,6 +131,6 @@ code_change(_OldVersion, Library, _Extra) -> {ok, Library}.
 %private function
 get_time_insecond() -> calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
 get_reqid() -> erlang:phash2(erlang:now()).
-get_first(List) -> 
-   [Value|_] = List,
-    Value.
+%get_first(List) -> 
+%   [Value|_] = List,
+%    Value.

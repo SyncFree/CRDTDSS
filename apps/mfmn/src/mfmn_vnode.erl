@@ -76,8 +76,8 @@ handle_command({value, ReqID, _, Key}, _Sender, State) ->
 	  R2= #value{queue=Q, lease=Lease, crdt=R1#value.crdt},
     	  D0 = dict:erase(Key, State#state.kv),
     	  D1 = dict:append(Key, R2, D0),
-	  Reply_value = mfmn_crdt_controller:value(R1#value.crdt),
-	  {reply, {ReqID, Reply_value, Lease}, State#state{kv=D1}};
+	  %Reply_value = mfmn_crdt_controller:value(R1#value.crdt),
+	  {reply, {ReqID, R1#value.crdt, Lease}, State#state{kv=D1}};
 	error ->
 	  {reply, {error, no_key}, State}
     end;
@@ -92,26 +92,25 @@ handle_command({value, ReqID, Key}, _Sender, State) ->
 	  R2= #value{queue=Q, lease=Lease, crdt=R1#value.crdt},
     	  D0 = dict:erase(Key, State#state.kv),
     	  D1 = dict:append(Key, R2, D0),
-	  Reply_value = mfmn_crdt_controller:value(R1#value.crdt),
-	  {reply, {ReqID, Reply_value, Lease}, State#state{kv=D1}};
+	  %Reply_value = mfmn_crdt_controller:value(R1#value.crdt),
+	  {reply, {ReqID, R1#value.crdt, Lease}, State#state{kv=D1}};
 	error ->
 	  {reply, {error, no_key}, State}
     end;
 
 handle_command({new, ReqID, Key, Type}, _Sender, State) ->
-	io:format("Handling New key: ~w~w",[Key, Type]),
+	io:format("VNode is adding new key: ~w ~w ~n",[Key, Type]),
 	CRDT = mfmn_crdt_controller:new(Type),
 	R = #value{queue=queue:new(), lease=?DefaultL, crdt= CRDT},
 	D0 = dict:append(Key, R, State#state.kv),
-	{reply, {ReqID, mfmn_crdt_controller:value(CRDT), ?DefaultL}, State#state{kv=D0}};    
+	{reply, {ReqID, CRDT, ?DefaultL}, State#state{kv=D0}};    
 
 handle_command({update, ReqID, Fetch, Key, Param}, _Sender, State) ->
     TStamp=get_time_inseconds(),
     case dict:find(Key, State#state.kv) of
 	{ok, Value_list} ->
 	    Old_record = get_first(Value_list),
-	    NewCRDT = mfmn_crdt_controller:update(Old_record#value.crdt, Param, _Sender),
-	    NewValue = mfmn_crdt_controller:value(NewCRDT),
+	    NewCRDT = mfmn_crdt_controller:update(Old_record#value.crdt, Param),
 	    Q1=Old_record#value.queue,
 	    Length = queue:len(Q1),
 	    if Length>=?L ->
@@ -132,11 +131,11 @@ handle_command({update, ReqID, Fetch, Key, Param}, _Sender, State) ->
 	    Lease = ?DefaultL,
 	    Record= #value{queue=queue:in(TStamp, Q1), lease=Lease, crdt=mfmn_crdt_controller:new(undefined)},
     	    D1 = dict:append(Key, Record, State#state.kv),
-	    NewValue=Param
+	    NewCRDT=Param
     end,
     if 
 	Fetch =:= true ->
-	  {reply, {ReqID, NewValue, Lease}, State#state{kv=D1}};
+	  {reply, {ReqID, NewCRDT, Lease}, State#state{kv=D1}};
         true ->
 	  {noreply, State#state{kv=D1}}
     end;

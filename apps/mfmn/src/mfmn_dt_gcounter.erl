@@ -96,8 +96,8 @@ update({increment, Amount}, Actor, GCnt) when is_integer(Amount), Amount > 0 ->
 %% function described in the literature.
 -spec merge(gcounter(), gcounter()) -> gcounter().
 merge(GCnt1, GCnt2) ->
-    orddict:merge(fun(_, V1, V2) -> max(V1,V2) end,
-                  GCnt1, GCnt2).
+    NVC = vclock:merge([GCnt1#gcounter.vclock, GCnt2#gcounter.vclock]),
+    #gcounter{vclock= NVC}.
 
 %% @doc Are two `gcounter()'s structurally equal? This is not `value/1' equality.
 %% Two counters might represent the total `42', and not be `equal/2'. Equality here is

@@ -81,6 +81,7 @@ execute(timeout, SD0=#state{req_id=ReqID,
 %% @doc Waits for 1 write reqs to respond.
 waiting({ReqID, Val, Lease}, SD0=#state{from=From, key=Key}) ->
     SD = SD0#state{val=Val},
+    io:format("Op fsm is forwarding key ~w ~n", [Val]),
     mfmn_cache:add_key(From, ReqID, Key, Val, Lease),
     {stop, normal, SD};
 
