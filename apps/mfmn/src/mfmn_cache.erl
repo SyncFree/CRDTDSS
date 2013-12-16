@@ -21,8 +21,8 @@ new(Key, Type) ->
 update(Key, Param) ->
    gen_server:call(?MODULE, {update, Key, Param}).
 
-value(Key) ->
-   gen_server:call(?MODULE, {value, Key}).
+value(Key, Consistency) ->
+   gen_server:call(?MODULE, {value, Key, Consistency}).
 
 add_key(PID, ReqID, Key, CRDT, Lease ) ->
    io:format("Calling add key"),

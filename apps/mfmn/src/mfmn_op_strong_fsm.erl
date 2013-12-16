@@ -1,7 +1,7 @@
 %% @doc The coordinator for stat write opeartions.  This example will
 %% show how to properly replicate your data in Riak Core by making use
 %% of the _preflist_.
--module(mfmn_op_vclock_fsm).
+-module(mfmn_op_strong_fsm).
 -behavior(gen_fsm).
 -include("mfmn.hrl").
 
@@ -18,7 +18,6 @@
 -record(state, {req_id :: pos_integer(),
                 from :: pid(),
 		op :: atom(),
-		vclock,
 		key,
                 preflist :: riak_core_apl:preflist2(),
                 num_w = 0 :: non_neg_integer()}).
@@ -27,19 +26,18 @@
 %%% API
 %%%===================================================================
 
-start_link(ReqID, From, Op, Vclock, Key) ->
-    gen_fsm:start_link(?MODULE, [ReqID, From, Op, Vclock, Key], []).
+start_link(ReqID, From, Op, Key) ->
+    gen_fsm:start_link(?MODULE, [ReqID, From, Op, Key], []).
 
 %%%===================================================================
 %%% States
 %%%===================================================================
 
 %% @doc Initialize the state data.
-init([ReqID, From, Op, Vclock, Key]) ->
+init([ReqID, From, Op, Key]) ->
     SD = #state{req_id=ReqID,
                 from=From,
 		op=Op,
-		vclock=Vclock,
                 key=Key},
     {ok, prepare, SD, 0}.
 

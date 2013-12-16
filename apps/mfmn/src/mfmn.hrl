@@ -1,4 +1,5 @@
 -define(PRINT(Var), io:format("DEBUG: ~p:~p - ~p~n~n ~p~n~n", [?MODULE, ?LINE, ??Var, Var])).
+-define(OPTIMEOUT, 5000).
 
 %REPLICATION CONFIGURATION
 

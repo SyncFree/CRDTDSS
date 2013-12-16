@@ -10,8 +10,6 @@
 	 add/2
         ]).
 
--define(TIMEOUT, 5000).
-
 %% Public API
 
 %% @doc Pings a random vnode to make sure communication is functional
@@ -33,18 +31,18 @@ add(Key, Elem) ->
 
 %%write(Key, Value)->
     %%{ok, ReqID} = mfmn_cache:put(Key, Value),
-    %%wait_for_reqid(ReqID, ?TIMEOUT).
+    %%wait_for_reqid(ReqID, ?OPTIMEOUT).
     %%DocIdx = riak_core_util:chash_key({<<"key">>, term_to_binary(Key)}),
     %%PrefList = riak_core_apl:get_primary_apl(DocIdx, 1, mfmn),
     %%[{IndexNode, _Type}] = PrefList,
     %%riak_core_vnode_master:sync_spawn_command(IndexNode, {put, Key, Value}, mfmn_vnode_master).
 
-value(Key)->
-    case mfmn_cache:value(Key) of
+value(Key, Consistency)->
+    case mfmn_cache:value(Key, Consistency) of
 	{ok, Value} ->
 	  {Key, Value};
 	{wait, ReqID} ->
-	  wait_for_reqid(ReqID, ?TIMEOUT)
+	  wait_for_reqid(ReqID, ?OPTIMEOUT)
     end. 
 
 wait_for_reqid(ReqID, Timeout) ->
