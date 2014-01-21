@@ -4,13 +4,12 @@
 
 -export([
          ping/0,
+	 value/2,
 	 value/1,
 	 inc/1,
 	 new/2,
 	 add/2
         ]).
-
--define(TIMEOUT, 5000).
 
 %% Public API
 
@@ -38,13 +37,15 @@ add(Key, Elem) ->
     %%PrefList = riak_core_apl:get_primary_apl(DocIdx, 1, mfmn),
     %%[{IndexNode, _Type}] = PrefList,
     %%riak_core_vnode_master:sync_spawn_command(IndexNode, {put, Key, Value}, mfmn_vnode_master).
-
 value(Key)->
-    case mfmn_cache:value(Key) of
+    value(Key, eventual).
+
+value(Key, Consistency)->
+    case mfmn_cache:value(Key, Consistency) of
 	{ok, Value} ->
 	  {Key, Value};
 	{wait, ReqID} ->
-	  wait_for_reqid(ReqID, ?TIMEOUT)
+	  wait_for_reqid(ReqID, ?OPTIMEOUT)
     end. 
 
 wait_for_reqid(ReqID, Timeout) ->

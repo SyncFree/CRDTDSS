@@ -1,7 +1,7 @@
 %% @doc The coordinator for stat write opeartions.  This example will
 %% show how to properly replicate your data in Riak Core by making use
 %% of the _preflist_.
--module(mfmn_op_vclock_fsm).
+-module(mfmn_op_fetch_fsm).
 -behavior(gen_fsm).
 -include("mfmn.hrl").
 
@@ -18,8 +18,8 @@
 -record(state, {req_id :: pos_integer(),
                 from :: pid(),
 		op :: atom(),
-		vclock,
 		key,
+                param,
                 preflist :: riak_core_apl:preflist2(),
                 num_r = 0 :: non_neg_integer()}).
 
@@ -27,20 +27,21 @@
 %%% API
 %%%===================================================================
 
-start_link(ReqID, From, Op, Key, Vclock) ->
-    gen_fsm:start_link(?MODULE, [ReqID, From, Op, Key, Vclock], []).
+start_link(ReqID, From, Op, Key, Param) ->
+    io:format('The worker is about to start~n'),
+    gen_fsm:start_link(?MODULE, [ReqID, From, Op, Key, Param], []).
 
 %%%===================================================================
 %%% States
 %%%===================================================================
 
 %% @doc Initialize the state data.
-init([ReqID, From, Op, Key, Vclock]) ->
+init([ReqID, From, Op,  Key, Param]) ->
     SD = #state{req_id=ReqID,
                 from=From,
 		op=Op,
-		vclock=Vclock,
-                key=Key},
+                key=Key,
+                param=Param},
     {ok, prepare, SD, 0}.
 
 %% @doc Prepare the write by calculating the _preference list_.
@@ -55,14 +56,15 @@ prepare(timeout, SD0=#state{key=Key}) ->
 %% verify it has meets consistency requirements.
 execute(timeout, SD0=#state{req_id=ReqID,
                             op=Op,
-			    vclock=Vclock,
 			    key=Key,
+                            param=Param,
                             preflist=Preflist}) ->
-    mfmn_vnode:Op(Preflist, ReqID, Key, Vclock),
+    mfmn_vnode:Op(Preflist, ReqID, Key, Param),
     {next_state, waiting, SD0, ?OPTIMEOUT}.
 
 %% @doc Waits for 1 write reqs to respond.
 waiting({ReqID, Val, Lease}, SD0=#state{from=From, key=Key}) ->
+    io:format("Op fsm is forwarding key ~w ~n", [Val]),
     mfmn_cache:add_key(From, ReqID, Key, Val, Lease),
     {stop, normal, SD0};
 
@@ -73,9 +75,9 @@ waiting({error, no_key}, SD0=#state{num_r=R}) ->
     NextR=R+1,
     SD = SD0#state{num_r=NextR},
     if NextR==?N ->
-        {stop, normal, SD};
+    	{stop, normal, SD};
     true->
-        {next_state, waiting, SD, ?OPTIMEOUT}
+	{next_state, waiting, SD, ?OPTIMEOUT}
     end.
     
 

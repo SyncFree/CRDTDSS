@@ -6,21 +6,20 @@
 -include("mfmn.hrl").
 
 %% API
--export([start_link/5, start_link/6]).
+-export([start_link/5]).
 
 %% Callbacks
 -export([init/1, code_change/4, handle_event/3, handle_info/3,
          handle_sync_event/4, terminate/3]).
 
 %% States
--export([prepare/2, execute/2, waiting/2]).
+-export([prepare/2, execute/2]).
 
 -record(state, {req_id :: pos_integer(),
                 from :: pid(),
 		op :: atom(),
-		fetch,
 		key,
-                val = undefined :: term() | undefined,
+                val,
                 preflist :: riak_core_apl:preflist2(),
                 num_w = 0 :: non_neg_integer()}).
 
@@ -28,23 +27,19 @@
 %%% API
 %%%===================================================================
 
-start_link(ReqID, From, Op, Fetch, Key) ->
-    start_link(ReqID, From, Op, Fetch, Key, undefined).
-
-start_link(ReqID, From, Op, Fetch, Key, Val) ->
+start_link(ReqID, From, Op, Key, Val) ->
     io:format('The worker is about to start~n'),
-    gen_fsm:start_link(?MODULE, [ReqID, From, Op, Fetch, Key, Val], []).
+    gen_fsm:start_link(?MODULE, [ReqID, From, Op, Key, Val], []).
 
 %%%===================================================================
 %%% States
 %%%===================================================================
 
 %% @doc Initialize the state data.
-init([ReqID, From, Op, Fetch, Key, Val]) ->
+init([ReqID, From, Op, Key, Val]) ->
     SD = #state{req_id=ReqID,
                 from=From,
 		op=Op,
-		fetch=Fetch,
                 key=Key,
                 val=Val},
     {ok, prepare, SD, 0}.
@@ -61,33 +56,11 @@ prepare(timeout, SD0=#state{key=Key}) ->
 %% verify it has meets consistency requirements.
 execute(timeout, SD0=#state{req_id=ReqID,
                             op=Op,
-			    fetch=Fetch,
 			    key=Key,
                             val=Val,
                             preflist=Preflist}) ->
-    case Val of
-        undefined ->
-            mfmn_vnode:Op(Preflist, ReqID, Fetch, Key);
-        _ ->
-            mfmn_vnode:Op(Preflist, ReqID, Fetch, Key, Val)
-    end,
-    if
-	Fetch =:= true ->
-		{next_state, waiting, SD0};
-	true ->
-    		{stop, normal, SD0}
-    end.
-
-%% @doc Waits for 1 write reqs to respond.
-waiting({ReqID, Val, Lease}, SD0=#state{from=From, key=Key}) ->
-    SD = SD0#state{val=Val},
-    io:format("Op fsm is forwarding key ~w ~n", [Val]),
-    mfmn_cache:add_key(From, ReqID, Key, Val, Lease),
-    {stop, normal, SD};
-
-waiting({error, no_key}, SD) ->
-    {stop, normal, SD}.
-    
+    mfmn_vnode:Op(Preflist, ReqID, Key, Val),
+    {stop, normal, SD0}.
 
 handle_info(_Info, _StateName, StateData) ->
     {stop,badmsg,StateData}.

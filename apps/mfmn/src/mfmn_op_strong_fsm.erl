@@ -1,7 +1,7 @@
 %% @doc The coordinator for stat write opeartions.  This example will
 %% show how to properly replicate your data in Riak Core by making use
 %% of the _preflist_.
--module(mfmn_op_vclock_fsm).
+-module(mfmn_op_strong_fsm).
 -behavior(gen_fsm).
 -include("mfmn.hrl").
 
@@ -18,29 +18,34 @@
 -record(state, {req_id :: pos_integer(),
                 from :: pid(),
 		op :: atom(),
-		vclock,
 		key,
                 preflist :: riak_core_apl:preflist2(),
+		param,
+		lease,
+		replies,
                 num_r = 0 :: non_neg_integer()}).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-start_link(ReqID, From, Op, Key, Vclock) ->
-    gen_fsm:start_link(?MODULE, [ReqID, From, Op, Key, Vclock], []).
+start_link(ReqID, From, Op, Key, Param) ->
+    io:format('The worker is about to start~n'),
+    gen_fsm:start_link(?MODULE, [ReqID, From, Op, Key, Param], []).
 
 %%%===================================================================
 %%% States
 %%%===================================================================
 
 %% @doc Initialize the state data.
-init([ReqID, From, Op, Key, Vclock]) ->
+init([ReqID, From, Op, Key, Param]) ->
     SD = #state{req_id=ReqID,
                 from=From,
 		op=Op,
-		vclock=Vclock,
-                key=Key},
+                key=Key,
+		param=Param,
+		lease=infinite,
+		replies=[]},
     {ok, prepare, SD, 0}.
 
 %% @doc Prepare the write by calculating the _preference list_.
@@ -55,16 +60,36 @@ prepare(timeout, SD0=#state{key=Key}) ->
 %% verify it has meets consistency requirements.
 execute(timeout, SD0=#state{req_id=ReqID,
                             op=Op,
-			    vclock=Vclock,
 			    key=Key,
+			    param=Param,
                             preflist=Preflist}) ->
-    mfmn_vnode:Op(Preflist, ReqID, Key, Vclock),
+    mfmn_vnode:Op(Preflist, ReqID, Key, Param),
+    io:format("Operations sent (Strong consisncy)~n"),
     {next_state, waiting, SD0, ?OPTIMEOUT}.
 
 %% @doc Waits for 1 write reqs to respond.
-waiting({ReqID, Val, Lease}, SD0=#state{from=From, key=Key}) ->
-    mfmn_cache:add_key(From, ReqID, Key, Val, Lease),
-    {stop, normal, SD0};
+waiting({ReqID, Val, Lease}, SD0=#state{from=From, key=Key, lease=LeaseStored, replies=Replies, num_r=NumR}) ->
+    io:format("I have received one reply (Strong consisncy)~n"),
+    Replies2=lists:append(Replies, [Val]),
+    NumR2=NumR+1,
+    if LeaseStored==infinite ->
+	Lease2=Lease;
+    true->
+	if Lease<LeaseStored ->
+		Lease2=Lease;
+	true->
+		Lease2=LeaseStored
+	end
+    end,
+    SD = SD0#state{lease=Lease2, replies=Replies2, num_r=NumR2},
+    io:format("NumR2 ~w~n",[NumR2]),
+    if NumR2==?N ->
+	io:format("Sending the merged reply (Strong consistency)~n"),
+    	mfmn_cache:add_key(From, ReqID, Key, mfmn_crdt_controller:merge(Replies2), Lease2),
+   	{stop, normal, SD};
+    true ->
+	{next_state, waiting, SD, ?OPTIMEOUT}
+    end;
 
 waiting(timeout, SD) ->
     {stop, normal, SD};
@@ -77,7 +102,6 @@ waiting({error, no_key}, SD0=#state{num_r=R}) ->
     true->
         {next_state, waiting, SD, ?OPTIMEOUT}
     end.
-    
 
 handle_info(_Info, _StateName, StateData) ->
     {stop,badmsg,StateData}.

@@ -34,6 +34,14 @@ init(_Args) ->
                   {mfmn_op_worker_vclock_sup, start_link, []},
                   permanent, 5000, supervisor, [mfmn_op_worker_vclock_sup]},
 
+   OpsFetchSup = { mfmn_op_worker_fetch_sup,
+                  {mfmn_op_worker_fetch_sup, start_link, []},
+                  permanent, 5000, supervisor, [mfmn_op_worker_fetch_sup]},
+
+   OpsStrongSup = { mfmn_op_worker_strong_sup,
+                  {mfmn_op_worker_strong_sup, start_link, []},
+                  permanent, 5000, supervisor, [mfmn_op_worker_strong_sup]},
+
    { ok,
         { {one_for_one, 5, 10},
-          [VMaster, CacheSup, OpsSup, OpsVclockSup]}}.
+          [VMaster, CacheSup, OpsSup, OpsVclockSup, OpsFetchSup, OpsStrongSup]}}.
